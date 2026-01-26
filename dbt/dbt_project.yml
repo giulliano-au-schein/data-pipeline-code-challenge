@@ -1,0 +1,79 @@
+# =============================================================================
+# Marketplace Analytics - dbt Project
+# Senior Data Engineer Exercise
+# =============================================================================
+
+name: 'marketplace_analytics'
+version: '1.0.0'
+config-version: 2
+
+profile: 'marketplace_analytics'
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+# =============================================================================
+# Model Configurations
+# =============================================================================
+models:
+  marketplace_analytics:
+    # Staging models: 1-to-1 with source tables, light transformations
+    staging:
+      +materialized: view
+      +schema: staging
+      +tags: ['staging']
+
+    # Intermediate models: business logic, joins, complex transformations
+    intermediate:
+      +materialized: view
+      +schema: intermediate
+      +tags: ['intermediate']
+
+    # Marts: final tables for analytics/BI consumption
+    marts:
+      +materialized: table
+      +schema: marts
+      +tags: ['marts']
+
+# =============================================================================
+# Variables
+# =============================================================================
+vars:
+  # Date range for incremental processing
+  start_date: '2024-01-01'
+
+  # Currency conversion rates (simplified for exercise)
+  usd_to_eur: 0.92
+  usd_to_gbp: 0.79
+
+  # Platform fee percentage
+  platform_fee_pct: 0.03
+
+# =============================================================================
+# Seeds
+# =============================================================================
+seeds:
+  marketplace_analytics:
+    +schema: seeds
+
+    # Currency codes and their properties
+    currency_codes:
+      +column_types:
+        code: varchar(3)
+        name: varchar(50)
+        symbol: varchar(5)
+
+# =============================================================================
+# Snapshots (SCD Type 2)
+# =============================================================================
+snapshots:
+  marketplace_analytics:
+    +target_schema: snapshots

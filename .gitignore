@@ -1,0 +1,36 @@
+# Environment
+.env
+*.env.local
+
+# Secrets
+secrets/
+*.json
+!dbt/packages.yml
+
+# Airflow
+airflow/logs/
+airflow/plugins/
+*.pyc
+__pycache__/
+
+# dbt
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+
+# Docker volumes (local)
+postgres-data/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak

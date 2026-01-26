@@ -1,0 +1,264 @@
+version: "3.8"
+
+# =============================================================================
+# Senior Data Engineer Live Exercise - Docker Compose
+# Stack: Postgres (Source) -> Airbyte (EL) -> BigQuery Emulator (Target)
+#        Airflow (Orchestration) + dbt (Transform)
+# =============================================================================
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.8.1-python3.11
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db:5432/airflow
+    AIRFLOW__CORE__FERNET_KEY: ''
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    # dbt environment
+    DBT_PROFILES_DIR: /opt/airflow/dbt
+    GOOGLE_APPLICATION_CREDENTIALS: /opt/airflow/secrets/bigquery-emulator-sa.json
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./airflow/logs:/opt/airflow/logs
+    - ./airflow/plugins:/opt/airflow/plugins
+    - ./dbt:/opt/airflow/dbt
+    - ./secrets:/opt/airflow/secrets
+  depends_on: &airflow-common-depends-on
+    airflow-db:
+      condition: service_healthy
+
+services:
+  # ===========================================================================
+  # SOURCE DATABASE - Postgres with Marketplace Data
+  # ===========================================================================
+  source-postgres:
+    image: postgres:15-alpine
+    container_name: source-postgres
+    environment:
+      POSTGRES_USER: marketplace
+      POSTGRES_PASSWORD: marketplace_secret
+      POSTGRES_DB: marketplace
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./postgres/init:/docker-entrypoint-initdb.d
+      - source-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marketplace -d marketplace"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - data-pipeline-network
+
+  # ===========================================================================
+  # TARGET - BigQuery Emulator
+  # ===========================================================================
+  bigquery-emulator:
+    image: ghcr.io/goccy/bigquery-emulator:0.6.4
+    container_name: bigquery-emulator
+    command: |
+      --project=marketplace-analytics
+      --dataset=raw
+      --dataset=staging
+      --dataset=marts
+    ports:
+      - "9050:9050"  # BigQuery API
+      - "9060:9060"  # gRPC
+    networks:
+      - data-pipeline-network
+
+  # ===========================================================================
+  # AIRBYTE - EL (Extract & Load)
+  # ===========================================================================
+  airbyte-db:
+    image: postgres:13-alpine
+    container_name: airbyte-db
+    environment:
+      POSTGRES_USER: airbyte
+      POSTGRES_PASSWORD: airbyte
+      POSTGRES_DB: airbyte
+    volumes:
+      - airbyte-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airbyte -d airbyte"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - data-pipeline-network
+
+  airbyte-server:
+    image: airbyte/airbyte-api-server:0.63.2
+    container_name: airbyte-server
+    environment:
+      AIRBYTE_VERSION: 0.63.2
+      DATABASE_URL: jdbc:postgresql://airbyte-db:5432/airbyte
+      DATABASE_USER: airbyte
+      DATABASE_PASSWORD: airbyte
+      WORKSPACE_ROOT: /tmp/workspace
+      CONFIG_ROOT: /tmp/config
+      TRACKING_STRATEGY: logging
+      AIRBYTE_ROLE: dev
+    ports:
+      - "8001:8001"
+    depends_on:
+      airbyte-db:
+        condition: service_healthy
+    networks:
+      - data-pipeline-network
+
+  # Airbyte Worker & Scheduler (simplified for local dev)
+  airbyte-worker:
+    image: airbyte/worker:0.63.2
+    container_name: airbyte-worker
+    environment:
+      AIRBYTE_VERSION: 0.63.2
+      DATABASE_URL: jdbc:postgresql://airbyte-db:5432/airbyte
+      DATABASE_USER: airbyte
+      DATABASE_PASSWORD: airbyte
+      WORKSPACE_ROOT: /tmp/workspace
+      LOCAL_ROOT: /tmp/local
+      TEMPORAL_HOST: airbyte-temporal:7233
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - airbyte-workspace:/tmp/workspace
+    depends_on:
+      airbyte-db:
+        condition: service_healthy
+    networks:
+      - data-pipeline-network
+
+  airbyte-temporal:
+    image: airbyte/temporal:0.63.2
+    container_name: airbyte-temporal
+    environment:
+      DB: postgresql
+      DB_PORT: 5432
+      POSTGRES_USER: airbyte
+      POSTGRES_PWD: airbyte
+      POSTGRES_SEEDS: airbyte-db
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development.yaml
+    depends_on:
+      airbyte-db:
+        condition: service_healthy
+    networks:
+      - data-pipeline-network
+
+  airbyte-webapp:
+    image: airbyte/webapp:0.63.2
+    container_name: airbyte-webapp
+    environment:
+      AIRBYTE_VERSION: 0.63.2
+      API_URL: /api/v1/
+      INTERNAL_API_HOST: airbyte-server:8001
+    ports:
+      - "8000:80"
+    depends_on:
+      - airbyte-server
+    networks:
+      - data-pipeline-network
+
+  # ===========================================================================
+  # AIRFLOW - Orchestration
+  # ===========================================================================
+  airflow-db:
+    image: postgres:15-alpine
+    container_name: airflow-db
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - data-pipeline-network
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: airflow-init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create \
+          --username admin \
+          --password admin \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@example.com || true
+    restart: "no"
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: airflow-webserver
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+    networks:
+      - data-pipeline-network
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: airflow-scheduler
+    command: scheduler
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+    networks:
+      - data-pipeline-network
+
+  # ===========================================================================
+  # DBT - Transformation (runs via Airflow or CLI)
+  # ===========================================================================
+  dbt:
+    build:
+      context: ./docker
+      dockerfile: Dockerfile.dbt
+    container_name: dbt
+    environment:
+      DBT_PROFILES_DIR: /usr/app/dbt
+      BIGQUERY_PROJECT: marketplace-analytics
+      BIGQUERY_EMULATOR_HOST: bigquery-emulator:9050
+    volumes:
+      - ./dbt:/usr/app/dbt
+    depends_on:
+      - bigquery-emulator
+    networks:
+      - data-pipeline-network
+    # Keep container running for interactive use
+    command: ["tail", "-f", "/dev/null"]
+
+networks:
+  data-pipeline-network:
+    driver: bridge
+
+volumes:
+  source-postgres-data:
+  airbyte-db-data:
+  airbyte-workspace:
+  airflow-db-data:

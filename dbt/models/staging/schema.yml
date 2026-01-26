@@ -1,0 +1,23 @@
+version: 2
+
+models:
+  - name: stg_users
+    description: "Staged users with basic transformations applied"
+    columns:
+      - name: user_id
+        description: "Primary key"
+        tests:
+          - unique
+          - not_null
+      - name: email
+        tests:
+          - unique
+          - not_null
+      - name: user_type
+        tests:
+          - accepted_values:
+              values: ['buyer', 'seller', 'both']
+      - name: country_code
+        description: "ISO 3166-1 alpha-2 country code (XX for unknown)"
+        tests:
+          - not_null

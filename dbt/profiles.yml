@@ -1,0 +1,27 @@
+# =============================================================================
+# dbt Profiles - BigQuery Emulator Connection
+# =============================================================================
+
+marketplace_analytics:
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      method: oauth
+      project: marketplace-analytics
+      dataset: staging
+      threads: 4
+      timeout_seconds: 300
+      location: US
+      # BigQuery Emulator specific settings
+      # The emulator endpoint is set via BIGQUERY_EMULATOR_HOST env var
+
+    # Alternative: Direct connection for testing outside Docker
+    local:
+      type: bigquery
+      method: oauth
+      project: marketplace-analytics
+      dataset: staging
+      threads: 2
+      timeout_seconds: 300
+      location: US

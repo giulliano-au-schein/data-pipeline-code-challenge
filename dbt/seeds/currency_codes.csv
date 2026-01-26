@@ -1,0 +1,11 @@
+code,name,symbol,usd_rate
+USD,US Dollar,$,1.00
+EUR,Euro,€,1.09
+GBP,British Pound,£,1.27
+JPY,Japanese Yen,¥,0.0067
+CAD,Canadian Dollar,C$,0.74
+AUD,Australian Dollar,A$,0.65
+CHF,Swiss Franc,Fr,1.13
+CNY,Chinese Yuan,¥,0.14
+INR,Indian Rupee,₹,0.012
+KRW,South Korean Won,₩,0.00075

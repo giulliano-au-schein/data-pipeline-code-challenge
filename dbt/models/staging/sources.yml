@@ -1,0 +1,186 @@
+version: 2
+
+sources:
+  - name: raw_marketplace
+    description: "Raw marketplace data loaded from Postgres via Airbyte"
+    database: marketplace-analytics
+    schema: raw
+    loader: airbyte
+    loaded_at_field: _airbyte_extracted_at
+
+    freshness:
+      warn_after: {count: 12, period: hour}
+      error_after: {count: 24, period: hour}
+
+    tables:
+      # =======================================================================
+      # USERS
+      # =======================================================================
+      - name: users
+        description: "Marketplace users - both buyers and sellers"
+        columns:
+          - name: id
+            description: "Primary key (UUID)"
+            tests:
+              - unique
+              - not_null
+          - name: email
+            description: "User email address"
+            tests:
+              - unique
+              - not_null
+          - name: user_type
+            description: "Type of user: buyer, seller, or both"
+            tests:
+              - accepted_values:
+                  values: ['buyer', 'seller', 'both']
+          - name: seller_tier
+            description: "Seller tier level (NULL for pure buyers)"
+          - name: deleted_at
+            description: "Soft delete timestamp (NULL if active)"
+
+      # =======================================================================
+      # PRODUCTS
+      # =======================================================================
+      - name: products
+        description: "Product listings from sellers"
+        columns:
+          - name: id
+            description: "Primary key (UUID)"
+            tests:
+              - unique
+              - not_null
+          - name: seller_id
+            description: "Foreign key to users table"
+            tests:
+              - not_null
+              - relationships:
+                  to: source('raw_marketplace', 'users')
+                  field: id
+          - name: price_currency
+            description: "ISO 4217 currency code (USD, EUR, GBP)"
+          - name: status
+            description: "Product status"
+            tests:
+              - accepted_values:
+                  values: ['draft', 'active', 'paused', 'sold_out', 'deleted']
+
+      # =======================================================================
+      # ORDERS
+      # =======================================================================
+      - name: orders
+        description: "Customer orders"
+        columns:
+          - name: id
+            description: "Primary key (UUID)"
+            tests:
+              - unique
+              - not_null
+          - name: order_number
+            description: "Human-readable order number"
+            tests:
+              - unique
+              - not_null
+          - name: buyer_id
+            description: "Foreign key to users table"
+            tests:
+              - not_null
+          - name: status
+            description: "Order status"
+            tests:
+              - accepted_values:
+                  values: ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded']
+          - name: confirmed_at
+            description: "CAUTION: This column may be timezone-naive"
+
+      # =======================================================================
+      # ORDER_ITEMS
+      # =======================================================================
+      - name: order_items
+        description: "Line items within orders"
+        columns:
+          - name: id
+            tests:
+              - unique
+              - not_null
+          - name: order_id
+            tests:
+              - not_null
+          - name: product_id
+            tests:
+              - not_null
+
+      # =======================================================================
+      # PAYMENTS
+      # =======================================================================
+      - name: payments
+        description: "Payment transactions - CAUTION: Contains duplicate events"
+        columns:
+          - name: id
+            tests:
+              - unique
+              - not_null
+          - name: event_id
+            description: "Event ID for deduplication - NOT unique!"
+          - name: order_id
+            tests:
+              - not_null
+
+      # =======================================================================
+      # REVIEWS
+      # =======================================================================
+      - name: reviews
+        description: "Product reviews"
+        columns:
+          - name: id
+            tests:
+              - unique
+              - not_null
+          - name: rating
+            description: "Rating 1-5"
+            tests:
+              - not_null
+
+      # =======================================================================
+      # CATEGORIES
+      # =======================================================================
+      - name: categories
+        description: "Hierarchical product categories"
+        columns:
+          - name: id
+            tests:
+              - unique
+              - not_null
+          - name: parent_id
+            description: "Self-referential FK for hierarchy"
+
+      # =======================================================================
+      # SELLER_TIER_HISTORY (SCD Type 2 source)
+      # =======================================================================
+      - name: seller_tier_history
+        description: "Historical seller tier changes - use for SCD Type 2"
+        columns:
+          - name: id
+            tests:
+              - unique
+              - not_null
+          - name: user_id
+            tests:
+              - not_null
+          - name: is_current
+            description: "Flag indicating current record"
+
+      # =======================================================================
+      # EVENT_LOG
+      # =======================================================================
+      - name: event_log
+        description: "CDC event stream - events may arrive out of order"
+        columns:
+          - name: id
+            tests:
+              - unique
+              - not_null
+          - name: event_timestamp
+            description: "When the event occurred"
+          - name: received_at
+            description: "When the event was received (may differ from event_timestamp)"

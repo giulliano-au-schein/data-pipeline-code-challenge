@@ -1,0 +1,20 @@
+FROM python:3.11-slim
+
+WORKDIR /usr/app
+
+# Install dbt with BigQuery adapter
+RUN pip install --no-cache-dir \
+    dbt-core==1.7.8 \
+    dbt-bigquery==1.7.4 \
+    google-cloud-bigquery==3.17.2
+
+# Install additional utilities
+RUN pip install --no-cache-dir \
+    sqlfluff==3.0.0 \
+    dbt-osmosis==0.12.5
+
+# Set environment
+ENV DBT_PROFILES_DIR=/usr/app/dbt
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /usr/app/dbt

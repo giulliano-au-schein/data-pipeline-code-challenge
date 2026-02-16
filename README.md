@@ -148,6 +148,107 @@ curl http://localhost:9050
 docker-compose logs bigquery-emulator
 ```
 
+## Querying the BigQuery Emulator
+
+The BigQuery emulator ([goccy/bigquery-emulator](https://github.com/goccy/bigquery-emulator)) runs locally and exposes the same REST/gRPC APIs as real BigQuery. Three datasets are pre-created: `raw`, `staging`, and `marts` under project `marketplace-analytics`.
+
+### Method 1: REST API (curl)
+
+Query directly from the host machine — no authentication required.
+
+```bash
+# List datasets
+curl -s http://localhost:9050/bigquery/v2/projects/marketplace-analytics/datasets | python3 -m json.tool
+
+# Run a SQL query
+curl -s -X POST 'http://localhost:9050/bigquery/v2/projects/marketplace-analytics/queries' \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"SELECT 42 AS answer","useLegacySql":false}' | python3 -m json.tool
+```
+
+### Method 2: Python Client (inside containers)
+
+Use `google-cloud-bigquery` with `AnonymousCredentials` and the `BIGQUERY_EMULATOR_HOST` env var.
+
+```python
+import os
+os.environ["BIGQUERY_EMULATOR_HOST"] = "http://bigquery-emulator:9050"
+
+from google.auth.credentials import AnonymousCredentials
+from google.cloud import bigquery
+
+client = bigquery.Client(
+    project="marketplace-analytics",
+    credentials=AnonymousCredentials(),
+)
+
+# List datasets
+for ds in client.list_datasets():
+    print(ds.dataset_id)
+
+# Run a query
+rows = client.query("SELECT * FROM raw.my_table").result()
+for row in rows:
+    print(dict(row))
+```
+
+Run interactively from the dbt container:
+
+```bash
+docker exec -e BIGQUERY_EMULATOR_HOST=http://bigquery-emulator:9050 dbt python3 -c "
+from google.auth.credentials import AnonymousCredentials
+from google.cloud import bigquery
+client = bigquery.Client(project='marketplace-analytics', credentials=AnonymousCredentials())
+for ds in client.list_datasets():
+    print(ds.dataset_id)
+"
+```
+
+### Method 3: dbt
+
+dbt connects via `dbt-bigquery` adapter. The connection is configured in `dbt/profiles.yml` and uses the `BIGQUERY_EMULATOR_HOST` env var set on the dbt container.
+
+```bash
+# Run dbt models
+docker exec -e BIGQUERY_EMULATOR_HOST=http://bigquery-emulator:9050 dbt dbt run
+
+# Test models
+docker exec -e BIGQUERY_EMULATOR_HOST=http://bigquery-emulator:9050 dbt dbt test
+```
+
+### Emulator Limitations
+
+| Limitation | Detail |
+|---|---|
+| `INFORMATION_SCHEMA` | Not supported — use REST API to list datasets/tables |
+| `INSERT` statements | Must specify explicit column list (e.g., `INSERT INTO t (col1, col2) VALUES (...)`) |
+| `CREATE TABLE IF NOT EXISTS` | May not work reliably — use `CREATE TABLE` and handle errors |
+| Platform | Only published as `linux/amd64` — runs under emulation on Apple Silicon |
+| Authentication | Accepts any credentials — use `AnonymousCredentials` for simplicity |
+
+### Initial Data Configuration
+
+Datasets are defined in `bigquery/data.yaml`, mounted into the container. To add pre-seeded tables, extend the YAML:
+
+```yaml
+projects:
+  - id: marketplace-analytics
+    datasets:
+      - id: raw
+        tables:
+          - id: example_table
+            columns:
+              - name: id
+                type: INTEGER
+              - name: name
+                type: STRING
+            data:
+              - id: 1
+                name: "test"
+      - id: staging
+      - id: marts
+```
+
 ## License
 
 Internal use only - Interview assessment material.

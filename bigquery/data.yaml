@@ -1,0 +1,6 @@
+projects:
+  - id: marketplace-analytics
+    datasets:
+      - id: raw
+      - id: staging
+      - id: marts
